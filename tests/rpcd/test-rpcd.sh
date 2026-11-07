@@ -430,20 +430,20 @@ hd=$(mktemp -d)
 	printf 'SUMMARY_HEADER; DATETIME; LOG_TIMESTAMP\n'
 	printf 'SUMMARY; d; 100.10; 1000; 500; 0; 0; 10; 20; dl_low; ul_low; 330000; 54000\n'
 	printf 'SUMMARY; d; 100.90; 2000; 600; 0; 0; 11; 21; dl_low; ul_low; 330000; 54000\n'
-} > "$hd/h.log.old"
+} > "$hd/cake-autorate.h.log.old"
 {
 	printf 'DATA; ignored line\n'
 	printf 'SUMMARY; d; 101.50; 3000; 700; 0; 0; 12; 22; dl_high; ul_low; 320000; 54000\n'
 	printf 'SUMMARY; d; 102.00; nan; 800; 0; 0; 13; 23; dl_high; ul_low; 320000; 54000\n'
 	printf 'SUMMARY; d; 103.00; 4000; 900; 0; 0; 14; 24; dl_hi'
-} > "$hd/h.log"
+} > "$hd/cake-autorate.h.log"
 hj=$(CAKE_AUTORATE_LOG_DIR="$hd" do_history h)
 [ "$(printf '%s' "$hj" | jq -c '.points')" = '[[100,2000,600,330000,54000,11,21],[101,3000,700,320000,54000,12,22]]' ] \
 	&& ok "history: last sample per second, non-numeric and torn records skipped" \
 	|| fail "history points wrong: $hj"
 for i in $(seq 1 1300); do
 	printf 'SUMMARY; d; %s.0; 1; 1; 0; 0; 1; 1; dl_low; ul_low; 1; 1\n' "$((1000 + i))"
-done > "$hd/big.log"
+done > "$hd/cake-autorate.big.log"
 bj=$(CAKE_AUTORATE_LOG_DIR="$hd" do_history big)
 bn=$(printf '%s' "$bj" | jq '.points | length')
 bl=$(printf '%s' "$bj" | jq '.points[-1][0]')

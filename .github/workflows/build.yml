@@ -102,7 +102,10 @@ jobs:
           # "whatever the URL served" to a cryptographic one.
           wget -q --tries=3 --timeout=30 -O sha256sums "$SDK_URL_DIR/sha256sums"
           grep " \*$SDK_ARCHIVE\$" sha256sums > sdk.sha256
-          if sha256sum -c --status sdk.sha256; then
+          # Only verify a cached archive that exists: on a cache miss sha256sum
+          # would print "No such file" / "FAILED open or read", which reads like
+          # a failure in the log although the download below is the normal path.
+          if [ -f "$SDK_ARCHIVE" ] && sha256sum -c --status sdk.sha256; then
             echo "== using cached $SDK_ARCHIVE (checksum verified) =="
           else
             echo "== fetching $SDK_ARCHIVE =="
