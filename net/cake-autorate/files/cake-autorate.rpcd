@@ -26,6 +26,8 @@
 #                             age_s, how stale that sample is -- the daemon stops
 #                             logging entirely while it sleeps through an idle
 #                             link, so "not moving" is a normal state to report.
+#   history {instance}        Recent SUMMARY samples (one per second, at most
+#                             600) for the status view's chart; see do_history.
 #   service {action,instance?} start|stop|restart|reload the service via
 #                             /etc/init.d/cake-autorate.
 #
@@ -345,6 +347,69 @@ do_status() {
 }
 
 # --------------------------------------------------------------------------
+# history
+#
+# Recent SUMMARY samples for the status view's chart, oldest first:
+#   {"instance":"<inst>","points":[[epoch,dl_ach,ul_ach,dl_shaper,ul_shaper,
+#                                   dl_owd_us,ul_owd_us],...]}
+# Read from <log>.old then <log> (together they span up to two rotation
+# periods), keeping only records that are complete -- the same rule as
+# newest_summary_line, so a torn final fragment is dropped -- and numeric.
+# The daemon writes a SUMMARY per ping reply (~10-20/s), so samples are folded
+# to one per second (the last in each second) and then thinned by a fixed stride
+# down to at most $HISTORY_MAX_POINTS. Rates are kbps, OWD deltas microseconds.
+# --------------------------------------------------------------------------
+HISTORY_MAX_POINTS=600
+HISTORY_TAIL_LINES=20000
+
+history_points() {  # <file>...   (emits "epoch dl ul dls uls dlo ulo" per second)
+	local f ends_nl
+	for f in "$@"; do
+		[ -f "$f" ] || continue
+		ends_nl=0
+		[ -z "$(tail -c 1 "$f" 2>/dev/null)" ] && ends_nl=1
+		tail -n "$HISTORY_TAIL_LINES" "$f" 2>/dev/null | awk -F'; ' -v ends_nl="$ends_nl" '
+			function num(s) { return s ~ /^-?[0-9]+(\.[0-9]+)?$/ }
+			function emit(l,   a) {
+				split(l, a, "; ")
+				if (!(num(a[3]) && num(a[4]) && num(a[5]) && num(a[8]) && num(a[9]) && num(a[12]) && num(a[13])))
+					return
+				print int(a[3]), a[4], a[5], a[12], a[13], a[8], a[9]
+			}
+			{
+				if (NR > 1 && ok) emit(prev)
+				ok = ($1 == "SUMMARY" && NF >= 13)
+				prev = $0
+			}
+			END { if (ends_nl && ok) emit(prev) }
+		'
+	done | awk -v max="$HISTORY_MAX_POINTS" '
+		# one sample per second, last wins; epochs only move forward
+		$1 > last_t { n++; t[n] = $1; last_t = $1 }
+		$1 == last_t { row[n] = $0 }
+		END {
+			stride = (n > max) ? int((n + max - 1) / max) : 1
+			# keep the newest sample, step back by stride
+			for (i = n; i >= 1; i -= stride) keep[i] = 1
+			for (i = 1; i <= n; i++) if (keep[i]) print row[i]
+		}
+	'
+}
+
+do_history() {
+	local inst="$1" logdir="${CAKE_AUTORATE_LOG_DIR:-/var/log}" log first=1
+	valid_instance "$inst" || { err_json "invalid instance name"; return "$US_INVALID_ARGUMENT"; }
+	log="$logdir/cake-autorate.$inst.log"
+	printf '{"instance":"%s","points":[' "$inst"
+	history_points "$log.old" "$log" | while read -r e dl ul dls uls dlo ulo; do
+		[ "$first" = 1 ] || printf ','
+		first=0
+		printf '[%s,%s,%s,%s,%s,%s,%s]' "$e" "$dl" "$ul" "$dls" "$uls" "$dlo" "$ulo"
+	done
+	printf ']}\n'
+}
+
+# --------------------------------------------------------------------------
 # sqm_interfaces
 # --------------------------------------------------------------------------
 
@@ -461,6 +526,7 @@ cmd_list() {
 	{
 		"sqm_interfaces": {},
 		"status": { "instance": "" },
+		"history": { "instance": "" },
 		"service": { "action": "", "instance": "" }
 	}
 	EOF
@@ -479,6 +545,10 @@ cmd_call() {
 		status)
 			instance=$(printf '%s' "$REQ" | json_field instance)
 			do_status "$instance" || exit $?
+			;;
+		history)
+			instance=$(printf '%s' "$REQ" | json_field instance)
+			do_history "$instance" || exit $?
 			;;
 		service)
 			action=$(printf '%s' "$REQ" | json_field action)

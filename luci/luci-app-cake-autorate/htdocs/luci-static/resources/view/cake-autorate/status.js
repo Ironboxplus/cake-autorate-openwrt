@@ -4,6 +4,7 @@
 'require rpc';
 'require poll';
 'require cake-autorate.live as live';
+'require cake-autorate.chart as chart';
 
 /*
  * cake-autorate live status view.
@@ -45,6 +46,45 @@ var callStatus = rpc.declare({
 	params: ['instance'],
 	expect: { '': {} }
 });
+
+var callHistory = rpc.declare({
+	object: 'cake-autorate',
+	method: 'history',
+	params: ['instance'],
+	expect: { '': {} }
+});
+
+/* ECharts is bundled with the package (cake-autorate/echarts.min.js) and loaded
+ * on demand by this view only. Resolves to window.echarts, or rejects. */
+var echartsPromise = null;
+function loadECharts() {
+	if (!echartsPromise)
+		echartsPromise = new Promise(function (resolve, reject) {
+			if (window.echarts)
+				return resolve(window.echarts);
+			var s = document.createElement('script');
+			s.src = L.resource('cake-autorate/echarts.min.js');
+			s.onload = function () { window.echarts ? resolve(window.echarts) : reject(new Error('echarts did not load')); };
+			s.onerror = function () { reject(new Error('cannot load ' + s.src)); };
+			document.head.appendChild(s);
+		});
+	return echartsPromise;
+}
+
+/* A dark LuCI theme paints the page background dark; pick chart text to match. */
+function isDarkTheme() {
+	var m = String(getComputedStyle(document.body).backgroundColor).match(/\d+/g);
+	if (!m || m.length < 3)
+		return false;
+	return (0.299 * m[0] + 0.587 * m[1] + 0.114 * m[2]) < 128;
+}
+
+var CHART_LABELS = {
+	rateAxis: _('Mbit/s'), owdAxis: _('OWD delta (ms)'),
+	dlShaper: _('Download shaper'), dlAchieved: _('Download achieved'),
+	ulShaper: _('Upload shaper'), ulAchieved: _('Upload achieved'),
+	dlOwd: _('Download OWD delta'), ulOwd: _('Upload OWD delta')
+};
 
 var callService = rpc.declare({
 	object: 'cake-autorate',
@@ -312,8 +352,64 @@ return view.extend({
 			bodyEl.replaceChildren.apply(bodyEl, nodes);
 		}
 
+		/* Charts live outside bodyEl, so a structural rebuild of the cards never
+		 * destroys them. One per instance, created when its first data arrives:
+		 * seeded from `history`, then extended by every poll. */
+		var chartsEl = E('div', { 'id': 'cake-autorate-charts' });
+		var charts = {};
+		var chartsFailed = false;
+
+		function ensureChart(row, echarts) {
+			var c = charts[row.instance];
+			if (c)
+				return c.ready;
+			/* data-live: the visual suite masks it, like every other changing value. */
+			var el = E('div', { 'class': 'cake-chart', 'data-live': '1', 'data-cake-instance': row.instance });
+			chartsEl.appendChild(E('div', { 'class': 'cbi-section' }, [
+				E('h3', {}, _('Instance %s — rates and delay').format(row.instance)),
+				el
+			]));
+			c = charts[row.instance] = { el: el, ec: null, store: chart.emptyStore(), ready: null };
+			c.ready = callHistory(row.instance).catch(function () { return {}; }).then(function (h) {
+				c.store = chart.storeFromHistory(h);
+				c.ec = echarts.init(el, isDarkTheme() ? 'dark' : null);
+				c.ec.setOption(chart.chartOption(c.store, CHART_LABELS, isDarkTheme()));
+				return c;
+			});
+			return c.ready;
+		}
+
+		function updateCharts(rows) {
+			if (chartsFailed)
+				return;
+			loadECharts().then(function (echarts) {
+				rows.forEach(function (row) {
+					if (!row.available && !charts[row.instance])
+						return;
+					ensureChart(row, echarts).then(function (c) {
+						if (chart.pushStatusRow(c.store, row))
+							c.ec.setOption(chart.seriesUpdate(c.store));
+					});
+				});
+			}).catch(function (e) {
+				chartsFailed = true;
+				chartsEl.replaceChildren(E('div', { 'class': 'alert-message warning' },
+					_('Chart unavailable: %s').format(e && e.message ? e.message : e)));
+			});
+		}
+
+		window.addEventListener('resize', function () {
+			Object.keys(charts).forEach(function (k) {
+				if (charts[k].ec)
+					charts[k].ec.resize();
+			});
+		});
+
 		function refresh() {
-			return callStatus(null).then(renderRows).catch(function (e) {
+			return callStatus(null).then(function (resp) {
+				renderRows(resp);
+				updateCharts(live.statusRows(resp));
+			}).catch(function (e) {
 				// Replace the whole body with the error, and forget the last
 				// structure so the next successful poll does a full rebuild rather
 				// than trying an in-place update against the error DOM.
@@ -387,11 +483,13 @@ return view.extend({
 					'.cake-metric-label{font-weight:bold;}' +
 					'.cake-instance-controls{margin:.5em 0;display:flex;gap:.5em;flex-wrap:wrap;}' +
 					'.cake-unavailable{padding:.5em 0;opacity:.85;}' +
-					'.cake-lastupdate{opacity:.75;font-size:90%;}'),
+					'.cake-lastupdate{opacity:.75;font-size:90%;}' +
+					'.cake-chart{width:100%;height:380px;}'),
 				E('h2', {}, _('CAKE Autorate — Live status')),
 				E('p', {}, _('Per-instance live readout, refreshed every %d seconds from the running daemon. Dashed values mean no data has been parsed yet.').format(POLL_INTERVAL)),
 				globalControls,
-				bodyEl
+				bodyEl,
+				chartsEl
 			]);
 		});
 	}
