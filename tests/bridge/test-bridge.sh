@@ -225,6 +225,33 @@ else
 	fail "reflector fallback broke: rc=$_rc has_reflectors=$(printf '%s' "$_out" | grep -c '^reflectors=(')"
 fi
 
+# ------------------------------------------------------------------ check 6b
+echo
+echo "== 6b. shaper_backend is package-local: nss sources the NSS shaper last,"
+echo "       cake/unset emits nothing extra, anything else skips the instance"
+mk_backend() { printf "config cake-autorate 'bad'\n\toption enabled '1'\n\toption dl_if 'ifb@wan'\n\toption ul_if 'wan'\n\toption shaper_backend '%s'\n" "$1" > "$tmp/be.uci"; }
+
+mk_backend nss
+_out=$(CAKE_AUTORATE_NSS_SHAPER=/x/nss-shaper.sh run_bridge --uci-file "$tmp/be.uci" --instance bad --stdout 2>"$tmp/e"); _rc=$?
+if [ "$_rc" -eq 0 ] && [ "$(printf '%s\n' "$_out" | tail -n1)" = '. /x/nss-shaper.sh' ]; then
+	ok "shaper_backend nss -> config ends by sourcing the NSS shaper"
+else
+	fail "shaper_backend nss -> rc=$_rc, last line '$(printf '%s\n' "$_out" | tail -n1)'"
+fi
+printf '%s\n' "$_out" | grep -q '^shaper_backend=' \
+	&& fail "shaper_backend leaked into the daemon config as a key" \
+	|| ok "shaper_backend is never emitted as a daemon key"
+
+mk_backend cake
+_out=$(run_bridge --uci-file "$tmp/be.uci" --instance bad --stdout 2>"$tmp/e"); _rc=$?
+if [ "$_rc" -eq 0 ] && [ -n "$_out" ] && ! printf '%s' "$_out" | grep -q 'nss-shaper'; then
+	ok "shaper_backend cake -> no NSS hook"
+else
+	fail "shaper_backend cake -> rc=$_rc, nss hook present=$(printf '%s' "$_out" | grep -c 'nss-shaper')"
+fi
+
+mk_backend fq_codel; assert_skipped "unknown shaper_backend" "$tmp/be.uci"
+
 # ------------------------------------------------------------------ check 7
 echo
 echo "== 7. forced options win against UCI that tries to override them"

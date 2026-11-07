@@ -503,6 +503,16 @@ return view.extend({
 			' (<code>enabled</code>)');
 		en.rmempty = false;
 
+		/* Also package-local: picks what the rate changes are written to. 'nss'
+		 * makes the bridge source nss-shaper.sh, for sqm-scripts' nss-zk.qos on
+		 * NSS-offload targets, where there is no CAKE qdisc to change. */
+		var be = s.taboption('essentials', form.ListValue, 'shaper_backend', _('Shaper backend'),
+			_('What the rate changes are applied to. Use NSS when SQM runs the nss-zk.qos script on a Qualcomm NSS target; dl_if is then its ifb@&lt;wan&gt; device.') +
+			' (<code>shaper_backend</code>)');
+		be.value('cake', _('CAKE qdisc'));
+		be.value('nss', _('NSS nsstbl (nss-zk.qos)'));
+		be.default = 'cake';
+
 		/* dl_if / ul_if options, captured so the post-render pass can seed their
 		 * warnings for every existing section. */
 		var ifOpts = {};

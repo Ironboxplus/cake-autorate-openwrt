@@ -124,6 +124,8 @@ define Package/cake-autorate/install
 	$(INSTALL_BIN) $(PKG_BUILD_DIR)/launcher.sh $(1)$(CA_SCRIPT_PREFIX)/
 	$(INSTALL_DATA) $(PKG_BUILD_DIR)/defaults.sh $(1)$(CA_SCRIPT_PREFIX)/
 	$(INSTALL_DATA) $(PKG_BUILD_DIR)/lib.sh $(1)$(CA_SCRIPT_PREFIX)/
+	# NSS (nss-zk.qos) shaper backend, sourced by configs with shaper_backend=nss
+	$(INSTALL_DATA) ./files/nss-shaper.sh $(1)$(CA_SCRIPT_PREFIX)/
 
 	# --- where the bridge writes the generated per-instance config ------
 	$(INSTALL_DIR) $(1)$(CA_CONFIG_PREFIX)

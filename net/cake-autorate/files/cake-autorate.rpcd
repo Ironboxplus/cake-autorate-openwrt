@@ -349,11 +349,12 @@ do_status() {
 # --------------------------------------------------------------------------
 
 # Live ifb4* devices, one per line, sorted. These are the ingress devices SQM
-# created; each is a valid dl_if choice.
+# created; each is a valid dl_if choice. sqm-scripts' NSS script (nss-zk.qos)
+# names its ingress device ifb@<iface> instead, so those count too.
 list_ifb_devices() {
 	local d="${CAKE_AUTORATE_NET_DIR:-/sys/class/net}" f base
 	[ -d "$d" ] || return 0
-	for f in "$d"/ifb4*; do
+	for f in "$d"/ifb4* "$d"/ifb@*; do
 		[ -e "$f" ] || continue
 		base=${f##*/}
 		printf '%s\n' "$base"
@@ -397,7 +398,9 @@ do_sqm_interfaces() {
 		en=${line#*	}
 		[ -n "$iface" ] || continue
 		ifb="ifb4$iface"
-		if printf '%s\n' "$ifbs" | grep -qx "$ifb"; then present=1; else present=0; fi
+		if printf '%s\n' "$ifbs" | grep -qx "$ifb"; then present=1
+		elif printf '%s\n' "$ifbs" | grep -qxF "ifb@$iface"; then ifb="ifb@$iface"; present=1
+		else present=0; fi
 		# mismatch: SQM says shape this egress but its ifb ingress isn't live.
 		if [ "$(json_bool "$en")" = true ] && [ "$present" = 0 ]; then mismatch=1; else mismatch=0; fi
 		objs="$objs$sep{\"egress\":\"$iface\",\"ingress_ifb\":\"$ifb\",\"sqm_enabled\":$(json_bool "$en"),\"ifb_present\":$(json_bool "$present"),\"mismatch\":$(json_bool "$mismatch")}"

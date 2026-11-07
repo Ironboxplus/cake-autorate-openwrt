@@ -26,6 +26,10 @@
 #       - reflectors emitted as a bash array literal, validated IPv4/IPv6
 #       - negatives rejected everywhere
 #       - only the 66 upstream keys are ever emitted (an unknown key is fatal)
+#   * Package-local keys, never written as daemon keys: `enabled` (procd gate)
+#     and `shaper_backend` ('cake', the default, or 'nss'). 'nss' appends a line
+#     sourcing $NSS_SHAPER, which retargets the daemon's rate changes at the
+#     nsstbl shapers sqm-scripts' nss-zk.qos builds (see nss-shaper.sh).
 #   * Package-managed keys (docs/uci-schema.md section 4):
 #       - forced  : written AFTER user options with a fixed value so a user
 #                   cannot disable the log stream the LuCI status view and the
@@ -85,6 +89,7 @@ section_skip() { logmsg "instance $1 skipped: $2"; }
 
 TAB=$(printf '\t')
 SENTINEL='__CAKE_AUTORATE_UNSET__'
+NSS_SHAPER="${CAKE_AUTORATE_NSS_SHAPER:-/usr/lib/cake-autorate/nss-shaper.sh}"
 
 # --------------------------------------------------------------------------
 # Embedded option schema.
@@ -377,7 +382,7 @@ _libuci_emit_section() {
 	printf 'section\tcake-autorate\t%s\n' "$sid"
 	# enabled first, then every known option, probed with a sentinel so an
 	# unset option is distinguishable from one set to the empty string.
-	for opt in enabled $(_schema | cut -f1); do
+	for opt in enabled shaper_backend $(_schema | cut -f1); do
 		config_get val "$sid" "$opt" "$SENTINEL"
 		[ "$val" = "$SENTINEL" ] && continue
 		if [ "$opt" = reflectors ]; then
@@ -397,7 +402,7 @@ _libuci_emit_section() {
 # --------------------------------------------------------------------------
 process_section() {
 	local name="$1" rec="$2"
-	local enabled_raw enabled v line vals out present present_kept expected emitted line_count uniq_count kbps DROPPED
+	local enabled_raw enabled v line vals out present present_kept expected emitted line_count uniq_count kbps DROPPED backend
 
 	case "$name" in
 		''|*[!A-Za-z0-9_]*) section_skip "$name" "invalid instance name (must match [A-Za-z0-9_]+)"; return 1 ;;
@@ -422,11 +427,12 @@ process_section() {
 		return 0
 	fi
 
-	# Reject unknown keys and collect the options this section sets. `enabled` is
-	# the one package-local key and is never an upstream option. Names are looked
-	# up in the pre-parsed SCHEMA_NAMES, so there is no per-option subprocess.
+	# Reject unknown keys and collect the options this section sets. `enabled` and
+	# `shaper_backend` are package-local and never upstream options. Names are
+	# looked up in the pre-parsed SCHEMA_NAMES, so there is no per-option
+	# subprocess.
 	present=$(awk -F'\t' -v s="$SENTINEL" '
-		($1=="option" || $1=="list") && $2!="enabled" { print $2 }
+		($1=="option" || $1=="list") && $2!="enabled" && $2!="shaper_backend" { print $2 }
 	' "$rec" | sort -u)
 	for v in $present; do
 		case "$SCHEMA_NAMES" in
@@ -434,6 +440,13 @@ process_section() {
 			*) section_skip "$name" "unknown UCI option '$v' (not one of the 66 upstream options)"; return 1 ;;
 		esac
 	done
+
+	backend=$(grep -E "^option${TAB}shaper_backend${TAB}" "$rec" | tail -n1)
+	backend=${backend#option"${TAB}"shaper_backend"${TAB}"}
+	case "$backend" in
+		''|cake|nss) ;;
+		*) section_skip "$name" "unknown shaper_backend '$backend' (expected cake or nss)"; return 1 ;;
+	esac
 
 	out="$WORK/config.out"
 	DROPPED="$WORK/dropped"
@@ -517,6 +530,12 @@ process_section() {
 			*)      printf '%s=%s\n'   "$t_name" "$v" >> "$out" ;;
 		esac
 	done
+
+	# Backend hook last, so it sees every key above. Not a key=value line, so the
+	# coverage check below never counts it.
+	if [ "$backend" = nss ]; then
+		printf '# --- shaper backend: nss (shaper_backend) ---\n. %s\n' "$NSS_SHAPER" >> "$out"
+	fi
 
 	# ----- Coverage check -----
 	# expected = the user options this section sets, minus any we deliberately
