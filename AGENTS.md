@@ -116,6 +116,21 @@ parsers):
 
 ## Other durable facts
 
+- **`luci-app-cake-autorate-external` is a view, not a third copy.** It serves
+  the status page for a daemon this feed does not manage (upstream's manual
+  `/root/cake-autorate` checkout, configured by its owner -- the campus
+  router's multidial daemon writes those UCI sections). Its Makefile installs
+  `status.js`, `live.js`, `chart.js`, ECharts and `cake-autorate.rpcd` straight
+  from their homes here, ships no configuration page (the form targets the
+  bridge schema, which that daemon does not run), and `CONFLICTS` with both
+  full packages. It is built as a 24.10 `.ipk` by
+  `.github/workflows/build-external.yml` -- a separate product for opkg
+  routers, not a fork of the release recipe. The rpcd backend finds that
+  daemon's generated configs through `CAKE_AUTORATE_MANUAL_PREFIX`
+  (default `/root/cake-autorate`), consulted only when no
+  `CAKE_AUTORATE_CONFIG_PREFIX` is set and the package's own config is absent.
+  The daemon must run with `output_summary_stats=1`, or the view has no data.
+
 - **sqm-scripts dependency / qdisc ownership.** The package `DEPENDS` on
   `sqm-scripts`. SQM **owns** the CAKE qdisc (creates it on egress + the
   `ifb4<iface>` ingress); cake-autorate **only adjusts its bandwidth** and never

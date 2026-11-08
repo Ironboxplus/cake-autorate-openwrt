@@ -49,6 +49,9 @@
 #     CAKE_AUTORATE_NET_DIR    (default /sys/class/net)
 #     CAKE_AUTORATE_INSTANCES  (default: enabled UCI sections via libuci)
 #     CAKE_AUTORATE_INIT       (default /etc/init.d/cake-autorate)
+#     CAKE_AUTORATE_CONFIG_PREFIX  (default /etc/cake-autorate)
+#     CAKE_AUTORATE_MANUAL_PREFIX  (default /root/cake-autorate; used only when
+#                                   CONFIG_PREFIX is unset and holds no config)
 
 set -u
 
@@ -265,6 +268,15 @@ status_instance_json() {
 	local log="$logdir/cake-autorate.$inst.log"
 	local cfg="$cfgdir/config.$inst.sh"
 	local line parsed run_json body mt now up epoch age_json
+
+	# Upstream's manual install (its INSTALLATION.md) runs from a checkout in
+	# /root/cake-autorate whose own launcher.sh writes config.<instance>.sh
+	# there. luci-app-cake-autorate-external serves the status view for such a
+	# daemon, so look there when the package's generated config is absent --
+	# but never second-guess an explicit CAKE_AUTORATE_CONFIG_PREFIX.
+	if [ -z "${CAKE_AUTORATE_CONFIG_PREFIX:-}" ] && [ ! -e "$cfg" ]; then
+		cfg="${CAKE_AUTORATE_MANUAL_PREFIX:-/root/cake-autorate}/config.$inst.sh"
+	fi
 
 	now=$(date +%s 2>/dev/null || echo '')
 

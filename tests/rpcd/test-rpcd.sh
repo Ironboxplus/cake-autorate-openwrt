@@ -292,6 +292,27 @@ uj_stopped=$(up_status)
 	&& ok "no run dir -> running == false, uptime_s omitted" \
 	|| fail "stopped case wrong: $uj_stopped"
 
+# Upstream manual install: no package config, the checkout's launcher wrote
+# config.<inst>.sh into its own directory. Uptime must come from there.
+mkdir -p "$upd/run/upinst" "$upd/manual"
+: > "$upd/manual/config.upinst.sh"
+touch -d '@'"$((nowts - 7200))" "$upd/manual/config.upinst.sh" 2>/dev/null \
+	|| touch -t "$(date -d "@$((nowts - 7200))" +%Y%m%d%H%M.%S)" "$upd/manual/config.upinst.sh"
+uj_manual=$(CAKE_AUTORATE_LOG_DIR="$upd/log" CAKE_AUTORATE_RUN_DIR="$upd/run" \
+	CAKE_AUTORATE_MANUAL_PREFIX="$upd/manual" status_instance_json upinst)
+upv3=$(printf '%s' "$uj_manual" | jq -r '.uptime_s // empty')
+[ -n "$upv3" ] && [ "$upv3" -ge 7100 ] && [ "$upv3" -le 7300 ] \
+	&& ok "manual install: uptime_s read from the checkout's config ($upv3)" \
+	|| fail "manual-install uptime wrong: ${upv3:-<absent>} in $uj_manual"
+# ...but an explicit CONFIG_PREFIX is authoritative even when it holds nothing.
+rm -f "$upd/cfg/config.upinst.sh"
+uj_explicit=$(CAKE_AUTORATE_LOG_DIR="$upd/log" CAKE_AUTORATE_RUN_DIR="$upd/run" \
+	CAKE_AUTORATE_CONFIG_PREFIX="$upd/cfg" CAKE_AUTORATE_MANUAL_PREFIX="$upd/manual" \
+	status_instance_json upinst)
+[ "$(printf '%s' "$uj_explicit" | jq -r 'has("uptime_s")')" = false ] \
+	&& ok "explicit CONFIG_PREFIX is not overridden by the manual-install fallback" \
+	|| fail "fallback leaked past an explicit prefix: $uj_explicit"
+
 # file_mtime rejects a non-numeric reading rather than passing it through.
 [ -z "$(file_mtime "$upd/does-not-exist")" ] \
 	&& ok "file_mtime on a missing file returns nothing" \

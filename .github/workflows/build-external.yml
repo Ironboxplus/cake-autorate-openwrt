@@ -1,0 +1,134 @@
+# Build luci-app-cake-autorate-external as an .ipk for OpenWrt/ImmortalWrt
+# 24.10 (opkg). That package is the status view for a cake-autorate this feed
+# does not manage -- see its Makefile. It is NOT the release recipe: build.yml
+# stays the only place that builds what CI tests and release.yml ships (the
+# 25.12 apks). This workflow exists because a 24.10 router can only take ipks,
+# which only a 24.10 SDK produces.
+
+name: Build external (24.10 ipk)
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "luci/luci-app-cake-autorate-external/**"
+      - "luci/luci-app-cake-autorate/htdocs/**"
+      - "net/cake-autorate/files/cake-autorate.rpcd"
+      - ".github/workflows/build-external.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  OWRT_VERSION: "24.10.8"
+  SDK_ARCHIVE: "openwrt-sdk-24.10.8-x86-64_gcc-13.3.0_musl.Linux-x86_64.tar.zst"
+  SDK_URL_DIR: "https://downloads.openwrt.org/releases/24.10.8/targets/x86/64"
+  SDK_MIRROR_DIR: "https://mirror-03.infra.openwrt.org/releases/24.10.8/targets/x86/64"
+  IPK_SUBPATH: "bin/packages/x86_64/cakeautorate"
+  PKG: "luci-app-cake-autorate-external"
+
+jobs:
+  build:
+    name: Build ${{ github.workflow }}
+    runs-on: ubuntu-26.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Install SDK host build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential clang flex bison g++ gawk gcc-multilib \
+            gettext git libncurses-dev libssl-dev python3 python3-setuptools \
+            rsync unzip zlib1g-dev file wget zstd aria2
+
+      # Same reasoning as build.yml: cache only the archive, keyed on its name.
+      - name: Cache SDK archive
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          key: owrt-sdk-${{ env.SDK_ARCHIVE }}
+          path: ~/sdk-cache
+
+      - name: Download + extract the 24.10 SDK
+        run: |
+          mkdir -p ~/sdk-cache
+          cd ~/sdk-cache
+          wget -q --tries=3 --timeout=30 -O sha256sums "$SDK_URL_DIR/sha256sums"
+          grep " \*$SDK_ARCHIVE\$" sha256sums > sdk.sha256
+          if [ -f "$SDK_ARCHIVE" ] && sha256sum -c --status sdk.sha256; then
+            echo "== using cached $SDK_ARCHIVE (checksum verified) =="
+          else
+            echo "== fetching $SDK_ARCHIVE =="
+            rm -f "$SDK_ARCHIVE" "$SDK_ARCHIVE.part"
+            aria2c --console-log-level=warn --summary-interval=30 \
+              -x 16 -s 16 -k 4M --max-tries=5 --retry-wait=5 --timeout=30 \
+              -o "$SDK_ARCHIVE.part" \
+              "$SDK_URL_DIR/$SDK_ARCHIVE" "$SDK_MIRROR_DIR/$SDK_ARCHIVE" \
+              || wget -q --tries=3 --timeout=30 -O "$SDK_ARCHIVE.part" "$SDK_URL_DIR/$SDK_ARCHIVE"
+            mv "$SDK_ARCHIVE.part" "$SDK_ARCHIVE"
+            sha256sum -c sdk.sha256
+          fi
+          rm -rf "$GITHUB_WORKSPACE/sdk"
+          mkdir -p "$GITHUB_WORKSPACE/sdk"
+          tar --use-compress-program=unzstd \
+            -xf ~/sdk-cache/"$SDK_ARCHIVE" \
+            -C "$GITHUB_WORKSPACE/sdk" --strip-components=1
+
+      - name: Register this repo as the `cakeautorate` src-link feed
+        working-directory: ${{ github.workspace }}/sdk
+        run: |
+          # Append, as build.yml does: base + luci supply the metadata for the
+          # declared dependencies (luci-base, rpcd, jsonfilter), which are
+          # written into the ipk and resolved by opkg on the router.
+          cp feeds.conf.default feeds.conf
+          echo "src-link cakeautorate $GITHUB_WORKSPACE" >> feeds.conf
+          ./scripts/feeds update base luci cakeautorate
+          ./scripts/feeds install -a
+
+      - name: Build the package
+        working-directory: ${{ github.workspace }}/sdk
+        run: |
+          echo "CONFIG_PACKAGE_$PKG=m" > .config
+          make defconfig
+          # Nothing to compile and no dependency to build: NO_DEPS keeps the
+          # SDK from descending into the kernel package (see build.yml).
+          make "package/$PKG/compile" NO_DEPS=1 V=s
+
+      - name: Assert the ipk is complete
+        working-directory: ${{ github.workspace }}/sdk
+        run: |
+          ipk=$(ls "$IPK_SUBPATH"/"${PKG}"_*.ipk)
+          work=$(mktemp -d)
+          tar -xzf "$ipk" -C "$work"
+          tar -xzf "$work/control.tar.gz" -C "$work"
+          cat "$work/control"
+          grep -qx "Architecture: all" "$work/control" || { echo "::error::not a noarch ipk"; exit 1; }
+          for dep in luci-base rpcd jsonfilter; do
+            grep -E "^Depends:" "$work/control" | grep -qw "$dep" || { echo "::error::ipk lost dependency $dep"; exit 1; }
+          done
+          for c in luci-app-cake-autorate cake-autorate; do
+            grep -E "^Conflicts:" "$work/control" | grep -qw "$c" || { echo "::error::ipk lost conflict $c"; exit 1; }
+          done
+          tar -tzf "$work/data.tar.gz" | tee "$work/files.txt"
+          for f in usr/libexec/rpcd/cake-autorate \
+                   www/luci-static/resources/view/cake-autorate/status.js \
+                   www/luci-static/resources/cake-autorate/chart.js \
+                   www/luci-static/resources/cake-autorate/live.js \
+                   www/luci-static/resources/cake-autorate/echarts.min.js \
+                   usr/share/luci/menu.d/$PKG.json \
+                   usr/share/rpcd/acl.d/$PKG.json; do
+            grep -qx "./$f" "$work/files.txt" || { echo "::error::ipk is missing $f"; exit 1; }
+          done
+          ! grep -q "view/cake-autorate/overview.js" "$work/files.txt" \
+            || { echo "::error::the external variant must not ship the configuration page"; exit 1; }
+          mkdir -p "$GITHUB_WORKSPACE/ipks"
+          cp "$ipk" "$GITHUB_WORKSPACE/ipks/"
+
+      - name: Upload .ipk artifact
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: cake-autorate-external-ipk
+          path: ipks/*.ipk
+          if-no-files-found: error

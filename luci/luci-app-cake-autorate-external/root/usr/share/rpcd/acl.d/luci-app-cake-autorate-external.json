@@ -1,0 +1,16 @@
+{
+	"luci-app-cake-autorate-external": {
+		"description": "Grant access to the status, history and service control of an externally managed cake-autorate",
+		"read": {
+			"uci": [ "cake-autorate" ],
+			"ubus": {
+				"cake-autorate": [ "status", "history" ]
+			}
+		},
+		"write": {
+			"ubus": {
+				"cake-autorate": [ "service" ]
+			}
+		}
+	}
+}

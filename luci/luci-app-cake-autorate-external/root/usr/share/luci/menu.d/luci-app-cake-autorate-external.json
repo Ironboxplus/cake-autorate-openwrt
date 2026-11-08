@@ -1,0 +1,14 @@
+{
+	"admin/network/cake-autorate": {
+		"title": "CAKE Autorate",
+		"order": 60,
+		"action": {
+			"type": "view",
+			"path": "cake-autorate/status"
+		},
+		"depends": {
+			"acl": [ "luci-app-cake-autorate-external" ],
+			"uci": { "cake-autorate": true }
+		}
+	}
+}
