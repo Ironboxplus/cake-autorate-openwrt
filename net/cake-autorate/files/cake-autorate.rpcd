@@ -226,6 +226,11 @@ list_instances() {
 	. "$fns"
 	config_load cake-autorate 2>/dev/null || { set -u; return 0; }
 	config_foreach _emit_enabled_instance cake-autorate
+	# Upstream's own launcher.sh takes any section with an `enabled` option, and
+	# the sections an external owner writes for it (multidial on the campus
+	# router) are typed `cake_autorate`. Section names are unique per config, so
+	# walking both types cannot list an instance twice.
+	config_foreach _emit_enabled_instance cake_autorate
 	set -u
 }
 

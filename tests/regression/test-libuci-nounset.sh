@@ -40,12 +40,16 @@ cat > "$work/functions.sh" <<'STUB'
 
 config_load() { : "$CONFIG_LIST_STATE"; CA_LOADED=1; }
 
-# Invoke the callback once per fake section, touching an unbound var first.
+# Invoke the callback once per fake section of the requested type, touching an
+# unbound var first. `secondary` is typed `cake_autorate`, the way an external
+# owner (multidial) writes sections for upstream's launcher.sh.
 config_foreach() {
 	: "$CONFIG_SECTIONS"
 	cb=$1
-	"$cb" primary
-	"$cb" secondary
+	case "$2" in
+		cake-autorate) "$cb" primary ;;
+		cake_autorate) "$cb" secondary ;;
+	esac
 }
 
 # Return canned values so the bridge emits a minimal valid instance.
@@ -83,7 +87,9 @@ fi
 
 # ===========================================================================
 # 2. rpcd: no-arg `status` enumerates instances via the libuci path. It must
-#    return both instances, not an empty object.
+#    return both instances, not an empty object -- including the one whose
+#    section is typed `cake_autorate` (on the campus router every section is,
+#    and status came back `{}`).
 # ===========================================================================
 logdir="$work/logs"
 mkdir -p "$logdir"
@@ -98,7 +104,7 @@ if printf '{}' | CAKE_AUTORATE_FUNCTIONS_SH="$work/functions.sh" \
    sh "$rpcd" call status > "$out" 2> "$work/status.err"; then
 	if grep -q '"primary"' "$out" && grep -q '"secondary"' "$out" \
 	   && grep -q '"cake_dl_rate_kbps":45000' "$out"; then
-		ok "rpcd status enumerates instances via libuci under a hostile functions.sh"
+		ok "rpcd status enumerates both section types via libuci under a hostile functions.sh"
 	else
 		bad "rpcd status returned an unexpected/empty body"
 		printf '  --- stdout ---\n'; sed 's/^/  /' "$out"

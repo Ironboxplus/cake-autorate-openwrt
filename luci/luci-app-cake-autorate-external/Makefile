@@ -18,7 +18,7 @@ include $(TOPDIR)/rules.mk
 
 PKG_NAME:=luci-app-cake-autorate-external
 PKG_VERSION:=0.2.6
-PKG_RELEASE:=1
+PKG_RELEASE:=2
 PKG_MAINTAINER:=Ironboxplus
 PKG_LICENSE:=GPL-2.0-or-later
 
